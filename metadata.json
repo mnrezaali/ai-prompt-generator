@@ -1,5 +1,5 @@
 {
-  "name": "AI Assistant Prompt Generator",
-  "description": "A sophisticated web application to help users create detailed, well-structured system prompts for AI assistants. It expands a user's high-level idea into a professional-grade prompt and allows for refinement through a chat interface, all secured behind an access gate.",
+  "name": "Hello World",
+  "description": "A simple React application that displays 'Hello World' with some nice styling using Tailwind CSS.",
   "requestFramePermissions": []
 }
