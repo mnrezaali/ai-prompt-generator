@@ -16,7 +16,7 @@
     "strict": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["components", "App.tsx", "index.tsx", "constants.ts"],
+  "include": ["components/icons.tsx", "App.tsx", "index.tsx", "constants.ts"],
   "exclude": ["api", "node_modules"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
