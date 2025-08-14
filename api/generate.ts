@@ -7,10 +7,30 @@ const GEMINI_MODEL = 'gemini-2.5-flash';
 // In deployment (e.g., on Vercel), this is set in the environment variables of the platform.
 const API_KEY = process.env.API_KEY;
 
+// --- TYPE DEFINITIONS ---
 type ChatMessage = {
     role: 'user' | 'model';
     text: string;
 };
+
+// Request Body for 'generate' action
+interface GenerateRequest {
+    type: 'generate';
+    userInput: string;
+    tone: string;
+    targetAudience: string;
+}
+
+// Request Body for 'refine' action
+interface RefineRequest {
+    type: 'refine';
+    message: string;
+    chatHistory: ChatMessage[];
+}
+
+// Union type for the request body
+type RequestBody = GenerateRequest | RefineRequest;
+
 
 // --- SYSTEM INSTRUCTIONS ---
 const GENERATE_SYSTEM_INSTRUCTION = `You are a world-class expert in designing AI assistant prompts. Your task is to take a user's brief idea for an AI assistant and expand it into a comprehensive, well-structured, and effective system prompt. The prompt should be ready to be used directly with a large language model.
@@ -67,14 +87,18 @@ function toReadableStream(stream: AsyncGenerator<any>): ReadableStream {
 
 export default async (req: Request) => {
     if (!API_KEY) {
-        return new Response("API key not configured.", { status: 500 });
+        return new Response(JSON.stringify({ error: "API key not configured." }), { 
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+        });
     }
     
     try {
-        const { type, userInput, tone, targetAudience, chatHistory, message } = await req.json();
+        const body = await req.json() as RequestBody;
         const ai = new GoogleGenAI({ apiKey: API_KEY });
 
-        if (type === 'generate') {
+        if (body.type === 'generate') {
+            const { userInput, tone, targetAudience } = body;
             let fullUserInput = `User Request: "${userInput}"`;
             if (tone) fullUserInput += `\n- Desired Tone: ${tone}`;
             if (targetAudience) fullUserInput += `\n- Target Audience: ${targetAudience}`;
@@ -89,9 +113,17 @@ export default async (req: Request) => {
                 headers: { 'Content-Type': 'text/plain; charset=utf-8' },
             });
 
-        } else if (type === 'refine' && Array.isArray(chatHistory) && chatHistory.length > 0) {
+        } else if (body.type === 'refine') {
+            const { chatHistory, message } = body;
+            if (!Array.isArray(chatHistory) || chatHistory.length === 0) {
+                return new Response(JSON.stringify({ error: "Invalid chat history for refine request." }), { 
+                    status: 400,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
+
             const originalPrompt = chatHistory[0].text;
-            const conversationHistory = (chatHistory.slice(1) as ChatMessage[]).map((msg) => ({
+            const conversationHistory = chatHistory.slice(1).map((msg) => ({
                 role: msg.role,
                 parts: [{ text: msg.text }]
             }));
@@ -111,7 +143,10 @@ export default async (req: Request) => {
             });
         }
 
-        return new Response("Invalid request type.", { status: 400 });
+        return new Response(JSON.stringify({ error: "Invalid request type specified." }), { 
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+        });
 
     } catch (error) {
         console.error(error);
