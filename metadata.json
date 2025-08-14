@@ -1,5 +1,5 @@
 {
-  "name": "Copy of AI Assistant Prompt Generator -  Web Version",
-  "description": "An application that takes a user's high-level idea for an AI assistant and uses Gemini to generate a detailed, structured, and effective system prompt.",
+  "name": "AI Assistant Prompt Generator",
+  "description": "A sophisticated web application to help users create detailed, well-structured system prompts for AI assistants. It expands a user's high-level idea into a professional-grade prompt and allows for refinement through a chat interface, all secured behind an access gate.",
   "requestFramePermissions": []
 }
