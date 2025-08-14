@@ -1,7 +1,7 @@
 
 
 import React, { useState, useCallback, useEffect, memo, useRef } from 'react';
-import { SparklesIcon, CopyIcon, CheckIcon, SpinnerIcon, EyeIcon, EyeSlashIcon, ArrowLeftOnRectangleIcon, ClockIcon, TrashIcon, ChevronDownIcon, PaperAirplaneIcon } from './components/icons';
+import { SparklesIcon, CopyIcon, CheckIcon, SpinnerIcon, EyeIcon, EyeSlashIcon, ArrowLeftOnRectangleIcon, ClockIcon, TrashIcon, ChevronDownIcon, PaperAirplaneIcon } from './components/icons.tsx';
 
 // --- ACCESS CONTROL CONFIGURATION ---
 const ADMIN_ACCESS_CODE = 'ADMIN_MASTER_KEY';
