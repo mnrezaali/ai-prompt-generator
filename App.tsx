@@ -1,8 +1,8 @@
-
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { GoogleGenAI, Chat } from '@google/genai';
 import {
   SparklesIcon, CopyIcon, CheckIcon, SpinnerIcon, EyeIcon, EyeSlashIcon,
-  ArrowLeftOnRectangleIcon, ClockIcon, TrashIcon, ChevronDownIcon, PaperAirplaneIcon
+  ArrowLeftOnRectangleIcon, ClockIcon, TrashIcon, ChevronDownIcon, PaperAirplaneIcon, ArrowPathIcon, ArrowDownTrayIcon
 } from './icons';
 
 // Types
@@ -23,9 +23,29 @@ interface ChatMessage {
   role: 'user' | 'model';
   content: string;
 }
+type ActiveTab = 'refine' | 'test';
+
 
 const TONES = ["Formal", "Casual", "Humorous", "Authoritative", "Friendly", "Empathetic"];
 const ADMIN_CODE = "admin-unlock-righteye";
+
+const GENERATE_SYSTEM_INSTRUCTION = `You are an expert in designing AI assistant system prompts. A user will provide a high-level description of an assistant they want to build. Your task is to generate a comprehensive, well-structured system prompt based on their input.
+
+The output MUST be a single block of text.
+
+The prompt must include the following sections, clearly marked with headings:
+
+1.  **Core Identity:** Define who the AI is.
+2.  **Key Responsibilities:** List the primary tasks and functions of the AI.
+3.  **Rules & Constraints:** Specify limitations, boundaries, and critical rules the AI must follow.
+4.  **Interaction Style:** Describe the AI's tone, personality, and how it should communicate.
+5.  **Example Opening:** Provide a sample first response to a user interaction.
+
+**CRITICAL RULE:** Under "Rules & Constraints," you MUST ALWAYS include a disclaimer stating that the AI is not a licensed professional (e.g., financial advisor, doctor, lawyer) and its advice should not be taken as professional guidance.
+
+Analyze the user's request for purpose, tone, and audience to tailor each section effectively. Output only the complete, final prompt.`;
+
+const REFINE_SYSTEM_INSTRUCTION = `You are a prompt editing assistant. The user will provide a complete system prompt and a command to refine it. Your task is to rewrite the ENTIRE prompt based on the user's command, incorporating their changes seamlessly. You MUST output the complete, new version of the prompt. Do not just output the changes or a confirmation message. Output ONLY the full, updated prompt text.`;
 
 // Helper hook for localStorage
 const useLocalStorage = <T,>(key: string, initialValue: T): [T, React.Dispatch<React.SetStateAction<T>>] => {
@@ -272,7 +292,7 @@ const HistoryPanel = ({ history, onSelect, onClear, onClearAll }: { history: His
   );
 };
 
-const ChatPanel = ({ onSendMessage, chatHistory, isLoading, originalPrompt }: { onSendMessage: (message: string) => void, chatHistory: ChatMessage[], isLoading: boolean, originalPrompt: string }) => {
+const ChatPanel = ({ onSendMessage, chatHistory, isLoading, onSaveRequest }: { onSendMessage: (message: string) => void, chatHistory: ChatMessage[], isLoading: boolean, onSaveRequest: () => void }) => {
     const [message, setMessage] = useState('');
     const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -291,10 +311,18 @@ const ChatPanel = ({ onSendMessage, chatHistory, isLoading, originalPrompt }: { 
     };
 
     return (
-        <div className="mt-8 bg-slate-800/50 border border-slate-700 rounded-lg">
-            <div className="p-4 border-b border-slate-700">
-                <h3 className="font-bold text-lg text-slate-200">Refine Prompt</h3>
-                <p className="text-sm text-slate-400">Chat with the assistant to modify your generated prompt.</p>
+        <div className="bg-slate-800/50 border border-slate-700 rounded-lg">
+            <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+                <div>
+                    <h3 className="font-bold text-lg text-slate-200">Refine Prompt</h3>
+                    <p className="text-sm text-slate-400">Chat with the assistant to modify your generated prompt.</p>
+                </div>
+                {chatHistory.length > 0 &&
+                    <button onClick={onSaveRequest} className="flex items-center space-x-2 bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-2 px-3 rounded-lg transition duration-300 text-sm">
+                        <ArrowDownTrayIcon className="h-4 w-4" />
+                        <span>Export</span>
+                    </button>
+                }
             </div>
             <div ref={chatContainerRef} className="p-4 h-64 overflow-y-auto space-y-4">
                 {chatHistory.map((msg, index) => (
@@ -304,6 +332,12 @@ const ChatPanel = ({ onSendMessage, chatHistory, isLoading, originalPrompt }: { 
                         </div>
                     </div>
                 ))}
+                 {chatHistory.length === 0 && (
+                    <div className="text-center text-slate-500 pt-16">
+                        <p>Refine your prompt by sending a message.</p>
+                        <p className="text-sm">e.g., "Make the tone more professional."</p>
+                    </div>
+                )}
             </div>
             <form onSubmit={handleSubmit} className="p-4 border-t border-slate-700 flex items-center">
                 <input 
@@ -322,6 +356,107 @@ const ChatPanel = ({ onSendMessage, chatHistory, isLoading, originalPrompt }: { 
     );
 };
 
+const TestChatPanel = ({ onSendMessage, chatHistory, isLoading, onClear, onSaveRequest }: { onSendMessage: (message: string) => void, chatHistory: ChatMessage[], isLoading: boolean, onClear: () => void, onSaveRequest: () => void }) => {
+    const [message, setMessage] = useState('');
+    const chatContainerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (chatContainerRef.current) {
+            chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+        }
+    }, [chatHistory]);
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (message.trim() && !isLoading) {
+            onSendMessage(message);
+            setMessage('');
+        }
+    };
+
+    return (
+        <div className="bg-slate-800/50 border border-slate-700 rounded-lg">
+            <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+                <div>
+                    <h3 className="font-bold text-lg text-slate-200">Test Your Prompt</h3>
+                    <p className="text-sm text-slate-400">Interact with an AI assistant using your generated prompt.</p>
+                </div>
+                <div className="flex items-center space-x-2">
+                    {chatHistory.length > 0 &&
+                         <button onClick={onSaveRequest} className="flex items-center space-x-2 bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-2 px-3 rounded-lg transition duration-300 text-sm">
+                            <ArrowDownTrayIcon className="h-4 w-4" />
+                            <span>Export</span>
+                        </button>
+                    }
+                    <button onClick={onClear} className="flex items-center space-x-2 bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold py-2 px-3 rounded-lg transition duration-300 text-sm">
+                        <ArrowPathIcon className="h-4 w-4" />
+                        <span>Clear</span>
+                    </button>
+                </div>
+            </div>
+            <div ref={chatContainerRef} className="p-4 h-64 overflow-y-auto space-y-4">
+                {chatHistory.map((msg, index) => (
+                    <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-xl p-3 rounded-lg ${msg.role === 'user' ? 'bg-green-600 text-white' : 'bg-slate-700 text-slate-200'}`}>
+                            {msg.role === 'model' && index === chatHistory.length - 1 && isLoading ? <FormattedPrompt text={msg.content + '...'} /> : <FormattedPrompt text={msg.content} />}
+                        </div>
+                    </div>
+                ))}
+                {chatHistory.length === 0 && (
+                    <div className="text-center text-slate-500 pt-16">
+                        <p>Start the conversation by sending a message.</p>
+                    </div>
+                )}
+            </div>
+            <form onSubmit={handleSubmit} className="p-4 border-t border-slate-700 flex items-center">
+                <input
+                    type="text"
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    placeholder="Send a message..."
+                    className="flex-grow bg-slate-700 border border-slate-600 rounded-l-md py-2 px-4 text-slate-200 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    disabled={isLoading}
+                />
+                <button type="submit" className="bg-green-600 hover:bg-green-700 text-white font-bold p-2 rounded-r-md disabled:bg-green-800 disabled:cursor-not-allowed" disabled={isLoading}>
+                    {isLoading ? <SpinnerIcon className="h-5 w-5 animate-spin" /> : <PaperAirplaneIcon className="h-5 w-5" />}
+                </button>
+            </form>
+        </div>
+    );
+};
+
+const SaveChatModal = ({ isOpen, onClose, onSave, filename, setFilename }: { isOpen: boolean, onClose: () => void, onSave: () => void, filename: string, setFilename: (name: string) => void }) => {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" aria-modal="true" role="dialog">
+            <div className="bg-slate-800 rounded-lg shadow-xl p-6 w-full max-w-md animate-fade-in-up">
+                <h2 className="text-xl font-bold text-slate-100 mb-4">Save Conversation</h2>
+                <p className="text-slate-400 mb-4">Enter a filename for your conversation text file.</p>
+                <div>
+                    <label htmlFor="filename" className="block text-sm font-medium text-slate-300 mb-1">Filename</label>
+                    <input
+                        id="filename"
+                        type="text"
+                        value={filename}
+                        onChange={(e) => setFilename(e.target.value)}
+                        className="w-full bg-slate-700 border border-slate-600 rounded-md py-2 px-3 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                </div>
+                <div className="mt-6 flex justify-end space-x-4">
+                    <button onClick={onClose} className="bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
+                        Cancel
+                    </button>
+                    <button onClick={onSave} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md transition duration-300">
+                        Save
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
 export default function App() {
     const [adminSettings, setAdminSettings] = useLocalStorage<AdminSettings>('prompt-gen-admin-settings', { accessSecret: 'CLIENT', isGateEnabled: true });
     const [accessLevel, setAccessLevel] = useLocalStorage<AccessLevel>('prompt-gen-access-level', 'none');
@@ -335,44 +470,82 @@ export default function App() {
     const [error, setError] = useState<string | null>(null);
 
     const [history, setHistory] = useLocalStorage<HistoryItem[]>('prompt-gen-history', []);
+    
+    const [activeTab, setActiveTab] = useState<ActiveTab>('refine');
 
+    // State for refining prompt
     const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
     const [isChatLoading, setIsChatLoading] = useState(false);
-
     const originalPromptForChat = useRef('');
+    
+    // State for testing prompt
+    const [testChatHistory, setTestChatHistory] = useState<ChatMessage[]>([]);
+    const [isTestChatLoading, setIsTestChatLoading] = useState(false);
+    const testChatRef = useRef<Chat | null>(null);
+    
+    // State for save modal
+    const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+    const [chatToSave, setChatToSave] = useState<'refine' | 'test' | null>(null);
+    const [filename, setFilename] = useState('');
+
+    const ai = useMemo(() => {
+        if (!import.meta.env.VITE_API_KEY) {
+            return null;
+        }
+        try {
+            return new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY });
+        } catch (e) {
+            console.error("Failed to initialize GoogleGenAI:", e);
+            setError("Failed to initialize AI. Ensure API key is valid.");
+            return null;
+        }
+    }, []);
+    
+    const resetChatStates = () => {
+        setChatHistory([]);
+        setTestChatHistory([]);
+        testChatRef.current = null;
+        setActiveTab('refine');
+        setError(null);
+    };
 
     const handleGeneratePrompt = useCallback(async (
         input: string,
         genTone: string,
         genAudience: string
     ) => {
+        if (!ai) {
+            setError("AI client not initialized. Please configure your API key.");
+            return;
+        }
+
         setIsLoading(true);
         setError(null);
         setGeneratedPrompt('');
-        setChatHistory([]);
+        resetChatStates();
 
         try {
-            const response = await fetch('/api/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'generate', userInput: input, tone: genTone, targetAudience: genAudience }),
+            const fullPrompt = `Generate a system prompt for an AI assistant.
+      
+            **Assistant's Purpose:** ${input}
+            **Desired Tone:** ${genTone}
+            **Target Audience:** ${genAudience}`;
+            
+            const stream = await ai.models.generateContentStream({
+                model: 'gemini-2.5-flash',
+                contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+                config: {
+                  systemInstruction: GENERATE_SYSTEM_INSTRUCTION,
+                },
             });
 
-            if (!response.ok || !response.body) {
-                const errData = await response.json();
-                throw new Error(errData.error || 'Failed to fetch from API');
-            }
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
             let finalPrompt = '';
-
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value, { stream: true });
-                finalPrompt += chunk;
-                setGeneratedPrompt(prev => prev + chunk);
+            for await (const chunk of stream) {
+                const chunkText = chunk.text;
+                if (chunkText) {
+                    finalPrompt += chunkText;
+                    setGeneratedPrompt(prev => prev + chunkText);
+                }
             }
             
             originalPromptForChat.current = finalPrompt;
@@ -384,14 +557,15 @@ export default function App() {
                 userInput: input,
                 tone: genTone,
                 targetAudience: genAudience,
-            }, ...prev]);
+            }, ...prev.slice(0, 49)]); // Keep history to 50 items
 
         } catch (err) {
+            console.error(err);
             setError(err instanceof Error ? err.message : 'An unknown error occurred.');
         } finally {
             setIsLoading(false);
         }
-    }, [setHistory]);
+    }, [ai, setHistory]);
 
     const handleFormSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -410,8 +584,7 @@ export default function App() {
         setTargetAudience(item.targetAudience);
         setGeneratedPrompt(item.prompt);
         originalPromptForChat.current = item.prompt;
-        setChatHistory([]);
-        setError(null);
+        resetChatStates();
     }
 
     const handleClearHistoryItem = (id: string) => {
@@ -425,46 +598,42 @@ export default function App() {
     }
 
     const handleSendMessage = useCallback(async (message: string) => {
+        if (!ai) {
+            setError("AI client not initialized. Please configure your API key.");
+            return;
+        }
         setIsChatLoading(true);
         const currentChatHistory = [...chatHistory, { role: 'user' as const, content: message }, { role: 'model' as const, content: '' }];
         setChatHistory(currentChatHistory);
 
         try {
-            const response = await fetch('/api/generate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    type: 'refine',
-                    message,
-                    chatHistory: currentChatHistory.slice(0, -1),
-                    originalPrompt: originalPromptForChat.current
-                }),
+            const chat: Chat = ai.chats.create({
+                model: 'gemini-2.5-flash',
+                config: {
+                    systemInstruction: REFINE_SYSTEM_INSTRUCTION,
+                },
+                history: [{ role: 'model', parts: [{ text: originalPromptForChat.current }] }]
             });
+              
+            const stream = await chat.sendMessageStream({ message });
 
-            if (!response.ok || !response.body) {
-                const errData = await response.json();
-                throw new Error(errData.error || 'Failed to fetch from API');
-            }
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
             let finalResponse = '';
-
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value, { stream: true });
-                finalResponse += chunk;
-                setChatHistory(prev => {
-                    const newHistory = [...prev];
-                    newHistory[newHistory.length - 1].content = finalResponse;
-                    return newHistory;
-                });
+            for await (const chunk of stream) {
+                const chunkText = chunk.text;
+                if (chunkText) {
+                    finalResponse += chunkText;
+                    setChatHistory(prev => {
+                        const newHistory = [...prev];
+                        newHistory[newHistory.length - 1].content = finalResponse;
+                        return newHistory;
+                    });
+                }
             }
 
             setGeneratedPrompt(finalResponse);
             originalPromptForChat.current = finalResponse;
         } catch (err) {
+            console.error(err);
             const errorMsg = err instanceof Error ? err.message : 'An unknown error occurred.';
             setChatHistory(prev => {
                 const newHistory = [...prev];
@@ -474,7 +643,97 @@ export default function App() {
         } finally {
             setIsChatLoading(false);
         }
-    }, [chatHistory]);
+    }, [ai, chatHistory]);
+    
+    const handleSendTestMessage = useCallback(async (message: string) => {
+        if (!ai || !generatedPrompt) {
+            setError("AI client not initialized or no prompt generated.");
+            return;
+        }
+        setIsTestChatLoading(true);
+        setTestChatHistory(prev => [...prev, { role: 'user', content: message }, { role: 'model', content: '' }]);
+
+        try {
+            if (!testChatRef.current) {
+                testChatRef.current = ai.chats.create({
+                    model: 'gemini-2.5-flash',
+                    config: {
+                        systemInstruction: generatedPrompt,
+                    },
+                });
+            }
+
+            const stream = await testChatRef.current.sendMessageStream({ message });
+
+            let finalResponse = '';
+            for await (const chunk of stream) {
+                const chunkText = chunk.text;
+                if (chunkText) {
+                    finalResponse += chunkText;
+                    setTestChatHistory(prev => {
+                        const newHistory = [...prev];
+                        newHistory[newHistory.length - 1].content = finalResponse;
+                        return newHistory;
+                    });
+                }
+            }
+        } catch (err) {
+            console.error("Test Chat Error:", err);
+            const errorMsg = err instanceof Error ? err.message : 'An unknown error occurred.';
+            setTestChatHistory(prev => {
+                const newHistory = [...prev];
+                newHistory[newHistory.length-1].content = `Error: ${errorMsg}`;
+                return newHistory;
+            });
+        } finally {
+            setIsTestChatLoading(false);
+        }
+    }, [ai, generatedPrompt]);
+
+    const handleClearTestChat = () => {
+        setTestChatHistory([]);
+        testChatRef.current = null;
+    };
+    
+    const handleOpenSaveModal = (type: 'refine' | 'test') => {
+        setChatToSave(type);
+        const defaultFilename = `${type}-conversation-${new Date().toISOString().split('T')[0]}.txt`;
+        setFilename(defaultFilename);
+        setIsSaveModalOpen(true);
+    };
+
+    const handleSaveToFile = () => {
+        const historyToSave = chatToSave === 'refine' ? chatHistory : testChatHistory;
+        const promptForContext = chatToSave === 'refine' ? originalPromptForChat.current : generatedPrompt;
+
+        let fileContent = `Conversation from AI Prompt Generator\n`;
+        fileContent += `Date: ${new Date().toLocaleString()}\n`;
+        fileContent += `\n====================\n`;
+        fileContent += `SYSTEM PROMPT USED:\n`;
+        fileContent += `====================\n\n`;
+        fileContent += `${promptForContext}\n\n`;
+        fileContent += `====================\n`;
+        fileContent += `CONVERSATION:\n`;
+        fileContent += `====================\n\n`;
+
+        historyToSave.forEach(msg => {
+            const prefix = msg.role === 'user' ? 'User:' : 'Assistant:';
+            fileContent += `${prefix}\n${msg.content}\n\n`;
+        });
+
+        const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename.endsWith('.txt') ? filename : `${filename}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        setIsSaveModalOpen(false);
+        setChatToSave(null);
+    };
 
     const handleLogout = () => {
         setAccessLevel('none');
@@ -538,9 +797,9 @@ export default function App() {
                                     />
                                 </div>
                             </div>
-                            <button type="submit" disabled={isLoading} className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 disabled:cursor-not-allowed text-white font-bold py-2.5 px-4 rounded-md transition duration-300">
+                            <button type="submit" disabled={isLoading || !ai} className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 disabled:cursor-not-allowed text-white font-bold py-2.5 px-4 rounded-md transition duration-300">
                                 {isLoading ? <SpinnerIcon className="w-5 h-5 animate-spin mr-2" /> : <SparklesIcon className="w-5 h-5 mr-2" />}
-                                {isLoading ? 'Generating...' : 'Generate Prompt'}
+                                {isLoading ? 'Generating...' : !ai ? 'API Key Missing' : 'Generate Prompt'}
                             </button>
                         </form>
 
@@ -596,10 +855,40 @@ export default function App() {
 
                 {generatedPrompt && !isLoading && (
                     <div className="mt-8 animate-fade-in-up">
-                        <ChatPanel onSendMessage={handleSendMessage} chatHistory={chatHistory} isLoading={isChatLoading} originalPrompt={originalPromptForChat.current} />
+                         <div className="flex space-x-2 border-b border-slate-700 mb-4">
+                            <button
+                                onClick={() => setActiveTab('refine')}
+                                className={`py-2 px-4 font-semibold rounded-t-lg transition-colors border-b-2 ${activeTab === 'refine' ? 'bg-slate-800/50 text-indigo-300 border-indigo-400' : 'text-slate-400 hover:bg-slate-800/20 border-transparent'}`}
+                                aria-current={activeTab === 'refine'}
+                            >
+                                Refine Prompt
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('test')}
+                                className={`py-2 px-4 font-semibold rounded-t-lg transition-colors border-b-2 ${activeTab === 'test' ? 'bg-slate-800/50 text-green-300 border-green-400' : 'text-slate-400 hover:bg-slate-800/20 border-transparent'}`}
+                                aria-current={activeTab === 'test'}
+                            >
+                                Test Chat
+                            </button>
+                        </div>
+                        
+                        {activeTab === 'refine' && (
+                            <ChatPanel onSendMessage={handleSendMessage} chatHistory={chatHistory} isLoading={isChatLoading} onSaveRequest={() => handleOpenSaveModal('refine')} />
+                        )}
+                        
+                        {activeTab === 'test' && (
+                            <TestChatPanel onSendMessage={handleSendTestMessage} chatHistory={testChatHistory} isLoading={isTestChatLoading} onClear={handleClearTestChat} onSaveRequest={() => handleOpenSaveModal('test')} />
+                        )}
                     </div>
                 )}
             </main>
+            <SaveChatModal 
+                isOpen={isSaveModalOpen} 
+                onClose={() => setIsSaveModalOpen(false)}
+                onSave={handleSaveToFile}
+                filename={filename}
+                setFilename={setFilename}
+            />
         </div>
     );
 }
