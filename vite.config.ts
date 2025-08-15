@@ -1,9 +1,16 @@
-
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
-// https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), tsconfigPaths()],
+  plugins: [react()],
+  root: '.', // project root
+  build: {
+    outDir: 'dist', // Cloudflare expects this
+    emptyOutDir: true
+  },
+  resolve: {
+    alias: {
+      '@': '/src'
+    }
+  }
 });
